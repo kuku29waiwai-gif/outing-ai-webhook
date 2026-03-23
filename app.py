@@ -5,6 +5,7 @@
 """
 
 import os
+import time
 import requests
 from datetime import datetime
 from flask import Flask, request, abort
@@ -49,17 +50,23 @@ def geocode(place_name: str):
     headers = {
         "User-Agent": "OutingAI-WeatherBot/1.0"
     }
-    r = requests.get(url, params=params, headers=headers, timeout=10)
-    r.raise_for_status()
-    results = r.json()
-    if not results:
-        return None
-    result = results[0]
-    return {
-        "latitude": float(result["lat"]),
-        "longitude": float(result["lon"]),
-        "name": result.get("display_name", place_name).split(",")[0].strip(),
-    }
+    # 429 Too Many Requests の場合は最大3回リトライ
+    for attempt in range(3):
+        r = requests.get(url, params=params, headers=headers, timeout=10)
+        if r.status_code == 429:
+            time.sleep(2 ** attempt)  # 1秒 → 2秒 → 4秒
+            continue
+        r.raise_for_status()
+        results = r.json()
+        if not results:
+            return None
+        result = results[0]
+        return {
+            "latitude": float(result["lat"]),
+            "longitude": float(result["lon"]),
+            "name": result.get("display_name", place_name).split(",")[0].strip(),
+        }
+    return None  # リトライ上限に達した場合
 
 
 def get_weather(lat: float, lon: float) -> dict:
