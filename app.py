@@ -26,6 +26,7 @@ app = Flask(__name__)
 # 環境変数から認証情報を取得
 CHANNEL_SECRET = os.environ.get("CHANNEL_SECRET", "")
 CHANNEL_ACCESS_TOKEN = os.environ.get("CHANNEL_ACCESS_TOKEN", "")
+YAHOO_CLIENT_ID = os.environ.get("YAHOO_CLIENT_ID", "")
 
 configuration = Configuration(access_token=CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(CHANNEL_SECRET)
@@ -37,79 +38,34 @@ TIMEZONE = "Asia/Tokyo"
 # 天気取得ロジック
 # ──────────────────────────────────────────
 
-def _geocode_nominatim(place_name: str):
-    """Nominatim APIで地名を検索する（日本語地名対応）"""
-    url = "https://nominatim.openstreetmap.org/search"
+def geocode(place_name: str):
+    """Yahoo!ジオコーダAPIで地名から緯度経度を取得する（市区町村レベルの日本語地名対応）"""
+    url = "https://map.yahooapis.jp/geocode/V1/geoCoder"
     params = {
-        "q": place_name,
-        "format": "json",
-        "limit": 1,
-        "countrycodes": "jp",
-        "accept-language": "ja",
-    }
-    headers = {"User-Agent": "OutingAI-WeatherBot/1.0"}
-    for attempt in range(3):
-        try:
-            r = requests.get(url, params=params, headers=headers, timeout=10)
-            if r.status_code == 429:
-                time.sleep(3 * (attempt + 1))  # 3秒 → 6秒 → 9秒
-                continue
-            if r.status_code != 200:
-                return None
-            results = r.json()
-            if not results:
-                return None
-            result = results[0]
-            return {
-                "latitude": float(result["lat"]),
-                "longitude": float(result["lon"]),
-                "name": result.get("display_name", place_name).split(",")[0].strip(),
-            }
-        except Exception:
-            return None
-    return None  # リトライ上限
-
-
-def _geocode_openmeteo(place_name: str):
-    """Open-Meteo Geocoding APIで地名を検索する（英語・ローマ字対応）"""
-    url = "https://geocoding-api.open-meteo.com/v1/search"
-    params = {
-        "name": place_name,
-        "count": 5,
-        "language": "ja",
-        "format": "json",
+        "appid": YAHOO_CLIENT_ID,
+        "query": place_name,
+        "output": "json",
+        "results": 1,
     }
     try:
         r = requests.get(url, params=params, timeout=10)
         if r.status_code != 200:
             return None
         data = r.json()
-        results = data.get("results", [])
-        # 日本のみに絞る
-        jp_results = [res for res in results if res.get("country_code") == "JP"]
-        if not jp_results:
+        features = data.get("Feature", [])
+        if not features:
             return None
-        result = jp_results[0]
-        name = result.get("name", place_name)
-        admin1 = result.get("admin1", "")
-        display = f"{name}（{admin1}）" if admin1 else name
+        feature = features[0]
+        coords = feature["Geometry"]["Coordinates"]  # "経度,緯度" 形式
+        lon_str, lat_str = coords.split(",")
+        name = feature.get("Name", place_name)
         return {
-            "latitude": float(result["latitude"]),
-            "longitude": float(result["longitude"]),
-            "name": display,
+            "latitude": float(lat_str),
+            "longitude": float(lon_str),
+            "name": name,
         }
     except Exception:
         return None
-
-
-def geocode(place_name: str):
-    """地名から緯度経度を取得する（Nominatim優先、失敗時はOpen-Meteoにフォールバック）"""
-    # まずNominatimで試す（日本語地名に強い）
-    result = _geocode_nominatim(place_name)
-    if result:
-        return result
-    # フォールバック: Open-Meteo Geocoding API
-    return _geocode_openmeteo(place_name)
 
 
 def get_weather(lat: float, lon: float) -> dict:
