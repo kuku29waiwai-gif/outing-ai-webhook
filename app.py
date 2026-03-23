@@ -37,8 +37,8 @@ TIMEZONE = "Asia/Tokyo"
 # 天気取得ロジック
 # ──────────────────────────────────────────
 
-def geocode(place_name: str):
-    """地名から緯度経度を取得する（Nominatim API - 市区町村レベルの日本語地名に対応）"""
+def _geocode_nominatim(place_name: str):
+    """Nominatim APIで地名を検索する（日本語地名対応）"""
     url = "https://nominatim.openstreetmap.org/search"
     params = {
         "q": place_name,
@@ -47,26 +47,69 @@ def geocode(place_name: str):
         "countrycodes": "jp",
         "accept-language": "ja",
     }
-    headers = {
-        "User-Agent": "OutingAI-WeatherBot/1.0"
-    }
-    # 429 Too Many Requests の場合は最大3回リトライ
+    headers = {"User-Agent": "OutingAI-WeatherBot/1.0"}
     for attempt in range(3):
-        r = requests.get(url, params=params, headers=headers, timeout=10)
-        if r.status_code == 429:
-            time.sleep(2 ** attempt)  # 1秒 → 2秒 → 4秒
-            continue
-        r.raise_for_status()
-        results = r.json()
-        if not results:
+        try:
+            r = requests.get(url, params=params, headers=headers, timeout=10)
+            if r.status_code == 429:
+                time.sleep(3 * (attempt + 1))  # 3秒 → 6秒 → 9秒
+                continue
+            if r.status_code != 200:
+                return None
+            results = r.json()
+            if not results:
+                return None
+            result = results[0]
+            return {
+                "latitude": float(result["lat"]),
+                "longitude": float(result["lon"]),
+                "name": result.get("display_name", place_name).split(",")[0].strip(),
+            }
+        except Exception:
             return None
-        result = results[0]
+    return None  # リトライ上限
+
+
+def _geocode_openmeteo(place_name: str):
+    """Open-Meteo Geocoding APIで地名を検索する（英語・ローマ字対応）"""
+    url = "https://geocoding-api.open-meteo.com/v1/search"
+    params = {
+        "name": place_name,
+        "count": 5,
+        "language": "ja",
+        "format": "json",
+    }
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        results = data.get("results", [])
+        # 日本のみに絞る
+        jp_results = [res for res in results if res.get("country_code") == "JP"]
+        if not jp_results:
+            return None
+        result = jp_results[0]
+        name = result.get("name", place_name)
+        admin1 = result.get("admin1", "")
+        display = f"{name}（{admin1}）" if admin1 else name
         return {
-            "latitude": float(result["lat"]),
-            "longitude": float(result["lon"]),
-            "name": result.get("display_name", place_name).split(",")[0].strip(),
+            "latitude": float(result["latitude"]),
+            "longitude": float(result["longitude"]),
+            "name": display,
         }
-    return None  # リトライ上限に達した場合
+    except Exception:
+        return None
+
+
+def geocode(place_name: str):
+    """地名から緯度経度を取得する（Nominatim優先、失敗時はOpen-Meteoにフォールバック）"""
+    # まずNominatimで試す（日本語地名に強い）
+    result = _geocode_nominatim(place_name)
+    if result:
+        return result
+    # フォールバック: Open-Meteo Geocoding API
+    return _geocode_openmeteo(place_name)
 
 
 def get_weather(lat: float, lon: float) -> dict:
