@@ -36,42 +36,30 @@ TIMEZONE = "Asia/Tokyo"
 # 天気取得ロジック
 # ──────────────────────────────────────────
 
-# 日本語地名 → ローマ字変換の簡易マッピング（主要都市）
-JA_TO_ROMAJI = {
-    "東京": "Tokyo", "大阪": "Osaka", "名古屋": "Nagoya", "札幌": "Sapporo",
-    "福岡": "Fukuoka", "仙台": "Sendai", "広島": "Hiroshima", "京都": "Kyoto",
-    "神戸": "Kobe", "横浜": "Yokohama", "千葉": "Chiba", "埼玉": "Saitama",
-    "長崎": "Nagasaki", "熊本": "Kumamoto", "鹿児島": "Kagoshima", "那覇": "Naha",
-    "金沢": "Kanazawa", "静岡": "Shizuoka", "新潟": "Niigata", "高松": "Takamatsu",
-    "松山": "Matsuyama", "高知": "Kochi", "徳島": "Tokushima", "山口": "Yamaguchi",
-    "山形": "Yamagata", "盛岡": "Morioka", "青森": "Aomori", "秋田": "Akita",
-    "福島": "Fukushima", "宇都宮": "Utsunomiya", "前橋": "Maebashi", "水戸": "Mito",
-    "大津": "Otsu", "奈良": "Nara", "和歌山": "Wakayama", "鳥取": "Tottori",
-    "松江": "Matsue", "岡山": "Okayama", "福井": "Fukui", "甲府": "Kofu",
-    "長野": "Nagano", "富山": "Toyama", "大分": "Oita", "宮崎": "Miyazaki",
-    "佐賀": "Saga",
-}
-
-
 def geocode(place_name: str):
-    """地名から緯度経度を取得する（Open-Meteo Geocoding API）"""
-    url = "https://geocoding-api.open-meteo.com/v1/search"
-
-    # 日本語地名をローマ字に変換して検索（APIが日本語に対応していないため）
-    search_name = JA_TO_ROMAJI.get(place_name, place_name)
-
+    """地名から緯度経度を取得する（Nominatim API - 市区町村レベルの日本語地名に対応）"""
+    url = "https://nominatim.openstreetmap.org/search"
     params = {
-        "name": search_name,
-        "count": 1,
-        "language": "ja",
+        "q": place_name,
+        "format": "json",
+        "limit": 1,
+        "countrycodes": "jp",
+        "accept-language": "ja",
     }
-    r = requests.get(url, params=params, timeout=10)
+    headers = {
+        "User-Agent": "OutingAI-WeatherBot/1.0"
+    }
+    r = requests.get(url, params=params, headers=headers, timeout=10)
     r.raise_for_status()
-    data = r.json()
-    results = data.get("results")
+    results = r.json()
     if not results:
         return None
-    return results[0]
+    result = results[0]
+    return {
+        "latitude": float(result["lat"]),
+        "longitude": float(result["lon"]),
+        "name": result.get("display_name", place_name).split(",")[0].strip(),
+    }
 
 
 def get_weather(lat: float, lon: float) -> dict:
